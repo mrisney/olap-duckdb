@@ -1,8 +1,10 @@
 from fastapi import FastAPI, HTTPException
+from fastapi.staticfiles import StaticFiles
 import duckdb
 from config import Config
 import logging
 from app.oracle_to_duckdb import OracleToDuckDBProcessor
+from fastapi.responses import FileResponse
 
 app = FastAPI()
 
@@ -24,6 +26,9 @@ def query_duckdb(sql_query):
     except Exception as e:
         logging.error(f"DuckDB query error: {e}")
         raise
+
+# Mount the static directory to serve static files
+app.mount("/static", StaticFiles(directory="static"), name="static")
 
 @app.get("/columns/")
 async def get_columns():
@@ -70,7 +75,42 @@ async def get_record(index: int):
     except Exception as e:
         logging.error(f"Error fetching record: {e}")
         raise HTTPException(status_code=500, detail=str(e))
-    
+
+@app.get("/earliest_date/")
+async def get_earliest_date():
+    try:
+        result = query_duckdb("SELECT MIN(datcrashdate) AS earliest_date FROM mapview_crashes")
+        earliest_date = result[0]['earliest_date']
+        return {"earliest_date": earliest_date}
+    except Exception as e:
+        logging.error(f"Error fetching earliest date: {e}")
+        raise HTTPException(status_code=500, detail="Error fetching earliest date")
+
+
+@app.get("/counties")
+async def get_counties():
+    try:
+        counties = query_duckdb("SELECT DISTINCT vchcounty FROM mapview_crashes ORDER BY vchcounty")
+        return [county['vchcounty'] for county in counties]
+    except Exception as e:
+        logging.error(f"Error fetching counties: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.get("/daily_crashes/{county}")
+async def get_daily_crashes(county: str):
+    try:
+        crashes = query_duckdb(f"""
+            SELECT epoch(datcrashdate) AS timestamp, COUNT(*) AS crash_count
+            FROM mapview_crashes
+            WHERE vchcounty = '{county}'
+            GROUP BY datcrashdate
+            ORDER BY datcrashdate
+        """)
+        return {int(crash['timestamp']): crash['crash_count'] for crash in crashes}
+    except Exception as e:
+        logging.error(f"Error fetching daily crashes: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
 
 @app.get("/update_database/")
 async def update_database():
@@ -80,6 +120,14 @@ async def update_database():
     except Exception as e:
         logger.error(f"Error updating database: {e}")
         raise HTTPException(status_code=500, detail="Error updating database")
+
+@app.get("/")
+async def root():
+    return FileResponse('static/heatmap.html')
+
+@app.get("/heatmap.html")
+async def heatmap():
+    return FileResponse('static/heatmap.html')
 
 if __name__ == "__main__":
     import uvicorn

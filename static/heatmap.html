@@ -1,0 +1,241 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Calendar Heatmap Example</title>
+    <script src="https://d3js.org/d3.v7.min.js"></script>
+    <script src="https://unpkg.com/cal-heatmap/dist/cal-heatmap.min.js"></script>
+    <link rel="stylesheet" href="https://unpkg.com/cal-heatmap/dist/cal-heatmap.css">
+    <script src="https://unpkg.com/@popperjs/core@2"></script>
+    <script src="https://unpkg.com/cal-heatmap/dist/plugins/Legend.min.js"></script>
+    <script src="https://unpkg.com/cal-heatmap/dist/plugins/Tooltip.min.js"></script>
+    <link rel="stylesheet" href="https://stackpath.bootstrapcdn.com/bootstrap/4.3.1/css/bootstrap.min.css">
+    <script src="https://code.jquery.com/jquery-3.3.1.slim.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/popper.js/1.14.7/umd/popper.min.js"></script>
+    <script src="https://stackpath.bootstrapcdn.com/bootstrap/4.3.1/js/bootstrap.min.js"></script>
+
+    <style>
+        body {
+            font-family: Helvetica, Arial, sans-serif;
+            font-size: 16px;
+        }
+        h1 {
+            font-size: 24px;
+        }
+        .form-group label, .form-group select {
+            font-size: 16px;
+        }
+        #heatmap_parent {
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            min-height: 120px;
+            max-width: 100%;
+            overflow-y: hidden;
+            overflow-x: hidden;
+        }
+        #cal-heatmap {
+            width: 100%;
+            margin: 0 auto;
+            padding: 20px;
+        }
+        #legend {
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            margin-top: 10px;
+        }
+        .tooltip {
+            background-color: rgba(255, 255, 255, 0.9);
+            color: #000;
+            padding: 10px;
+            border-radius: 4px;
+            font-size: 14px;
+            box-shadow: 0px 0px 10px rgba(0, 0, 0, 0.1);
+        }
+        .navigation-buttons {
+            display: flex;
+            justify-content: center;
+            margin-top: 10px;
+        }
+        .navigation-buttons button {
+            margin: 0 5px;
+            background-color: grey;
+            color: white;
+            border: none;
+            padding: 5px 10px;
+            font-size: 14px;
+            border-radius: 4px;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1 class="text-center">Calendar Heatmap Example</h1>
+        <div class="form-group">
+            <label for="county-select">Select County:</label>
+            <select class="form-control" id="county-select"></select>
+        </div>
+        <div id="heatmap_parent">
+            <div id="cal-heatmap"></div>
+            <div id="legend"></div>
+        </div>
+        <div class="navigation-buttons">
+            <button id="previous-btn" class="btn btn-secondary">Previous</button>
+            <button id="next-btn" class="btn btn-secondary">Next</button>
+        </div>
+    </div>
+
+    <script>
+        let cal;
+        let startDate;
+        let endDate;
+        const range = 12; // Display 12 months
+
+        async function loadCounties() {
+            try {
+                const response = await fetch('/counties');
+                if (!response.ok) {
+                    throw new Error('Network response was not ok');
+                }
+                const counties = await response.json();
+                const countySelect = document.getElementById('county-select');
+                counties.forEach(county => {
+                    const option = document.createElement('option');
+                    option.value = county;
+                    option.textContent = county;
+                    countySelect.appendChild(option);
+                });
+                // Load heatmap data for the first county
+                if (counties.length > 0) {
+                    loadHeatmap(counties[0]);
+                }
+            } catch (error) {
+                console.error('Failed to fetch counties:', error);
+            }
+        }
+
+        async function loadHeatmap(county) {
+            try {
+                const response = await fetch(`/daily_crashes/${county}`);
+                if (!response.ok) {
+                    throw new Error('Network response was not ok');
+                }
+                const data = await response.json();
+                const processedData = processData(data);
+                calculateDateRange(processedData);
+                renderHeatmap(processedData);
+            } catch (error) {
+                console.error('Failed to fetch heatmap data:', error);
+            }
+        }
+
+        function processData(data) {
+            return Object.keys(data).map(key => ({
+                date: new Date(key * 1000),
+                value: data[key]
+            }));
+        }
+
+        function calculateDateRange(data) {
+            if (data.length > 0) {
+                const lastDate = new Date(data[data.length - 1].date);
+                endDate = new Date(lastDate.getFullYear(), lastDate.getMonth() + 1, 0);
+                startDate = new Date(lastDate.getFullYear(), lastDate.getMonth() - range, 1);
+            }
+        }
+
+        function renderHeatmap(data) {
+            if (cal) {
+                cal.destroy();
+            }
+            cal = new CalHeatmap();
+            cal.paint({
+                itemSelector: "#cal-heatmap",
+                data: {
+                    source: data,
+                    type: 'json',
+                    x: 'date',
+                    y: 'value',
+                },
+                date: { start: startDate, end: endDate },
+                range: range,
+                scale: { color: { type: 'linear', scheme: 'YlOrRd', domain: [0, 50] } },
+                domain: {
+                    type: 'month',
+                    label: { 
+                        position: "top", 
+                        text: (date) => {
+                            const currentDate = new Date(date);
+                            currentDate.setMonth(currentDate.getMonth() + 1); // Adjust month label
+                            return currentDate.toLocaleString('default', { month: 'long', year: 'numeric' });
+                        }
+                    },
+                },
+                subDomain: { type: 'day', width: 14, height: 14, label: { position: "top" } },
+            }, [
+                [
+                    Tooltip,
+                    {
+                        text: (date, value, dayjsDate) => value ? `${value} Major Accidents on ${dayjsDate.format('LL')}` : '',
+                        style: {
+                            backgroundColor: 'rgba(255, 255, 255, 0.9)',
+                            color: '#000',
+                            padding: '10px',
+                            borderRadius: '4px',
+                            fontSize: '14px',
+                            boxShadow: '0px 0px 10px rgba(0, 0, 0, 0.1)'
+                        }
+                    },
+                ],
+                [
+                    Legend,
+                    {
+                        itemSelector: '#legend',
+                        width: 400,
+                        label: 'Daily Major Accidents',
+                        labelFormat: {
+                            lower: "Less than {min} Major Accidents",
+                            inner: "Between {down} and {up} Major Accidents",
+                            upper: "More than {max} Major Accidents"
+                        }
+                    }
+                ]
+            ]);
+
+            cal.on('click', (event, timestamp, value) => {
+                console.log(
+                    'On <b>' +
+                    new Date(timestamp).toLocaleDateString() +
+                    '</b>, the number of accidents on this day of this month was ' +
+                    value 
+                );
+            });
+        }
+
+        document.getElementById('county-select').addEventListener('change', (event) => {
+            const selectedCounty = event.target.value;
+            loadHeatmap(selectedCounty);
+        });
+
+        document.getElementById('previous-btn').addEventListener('click', () => {
+            if (cal) {
+                cal.previous(range);
+            }
+        });
+
+        document.getElementById('next-btn').addEventListener('click', () => {
+            if (cal) {
+                cal.next(range);
+            }
+        });
+
+        async function initialize() {
+            await loadCounties();
+        }
+
+        initialize();
+    </script>
+</body>
+</html>

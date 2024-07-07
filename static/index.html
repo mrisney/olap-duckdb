@@ -1,0 +1,132 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Calendar Heatmap Example</title>
+    <script src="https://d3js.org/d3.v7.min.js"></script>
+    <script src="https://unpkg.com/cal-heatmap/dist/cal-heatmap.min.js"></script>
+    <link rel="stylesheet" href="https://unpkg.com/cal-heatmap/dist/cal-heatmap.css">
+    <script src="https://unpkg.com/@popperjs/core@2"></script>
+    <script src="https://unpkg.com/cal-heatmap/dist/plugins/Legend.min.js"></script>
+    <script src="https://unpkg.com/cal-heatmap/dist/plugins/Tooltip.min.js"></script>
+
+    <style>
+        body {
+            font-family: Helvetica, Arial, sans-serif;
+            font-size: 24px; /* Increased base font size */
+        }
+        #heatmap_parent {
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            min-height: 120px;
+            max-width: 100%;
+            overflow-y: hidden; /* Hide vertical scroll */
+            overflow-x: hidden; /* Hide horizontal scroll */
+        }
+        #cal-heatmap {
+            width: 100%;
+            margin: 0 auto;
+            padding: 20px;
+        }
+        #legend {
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            margin-top: 10px;
+        }
+        .tooltip {
+            background-color: rgba(255, 255, 255, 0.9); /* Lighter background color with opacity */
+            color: #000;
+            padding: 10px; /* Increased padding */
+            border-radius: 4px;
+            font-size: 18px; /* Increased tooltip font size */
+            box-shadow: 0px 0px 10px rgba(0, 0, 0, 0.1); /* Subtle shadow for better readability */
+        }
+    </style>
+</head>
+<body>
+    <div id="heatmap_parent">
+        <div id="cal-heatmap"></div>
+        <div id="legend"></div>
+    </div>
+    <script>
+        const startDate = new Date(2022, 0, 1);
+
+        async function loadData() {
+            try {
+                const response = await fetch('/data.json');
+                if (!response.ok) {
+                    throw new Error('Network response was not ok');
+                }
+                const data = await response.json();
+                return data;
+            } catch (error) {
+                console.error('Failed to fetch data:', error);
+                return {};
+            }
+        }
+
+        function processData(data) {
+            return Object.keys(data).map(key => ({
+                date: new Date(key * 1000),
+                value: data[key]
+            }));
+        }
+
+        loadData().then(data => {
+            console.log('Loaded data:', data);
+            const processedData = processData(data);
+            console.log('Processed data:', processedData);
+
+            const cal = new CalHeatmap();
+            cal.paint({
+                itemSelector: "#cal-heatmap",
+                data: {
+                    source: processedData,
+                    type: 'json',
+                    x: 'date',
+                    y: 'value',
+                },
+                date: { start: startDate },
+                range: 7,
+                scale: { color: { type: 'linear', scheme: 'YlOrRd', domain: [0, 50] } },
+                domain: {
+                    type: 'month',
+                    label: { position: "top", text: date => new Date(date).toLocaleString('default', { month: 'long' }) },
+                },
+                subDomain: { type: 'day', width: 14, height: 14, label: { position: "top" } },
+            }, [
+                [
+                    Tooltip,
+                    {
+                        text: (date, value, dayjsDate) => value ? `${value} activities on ${dayjsDate.format('LL')}` : '',
+                        style: {
+                            backgroundColor: 'rgba(255, 255, 255, 0.9)',
+                            color: '#000',
+                            padding: '10px',
+                            borderRadius: '4px',
+                            fontSize: '18px',
+                            boxShadow: '0px 0px 10px rgba(0, 0, 0, 0.1)'
+                        }
+                    },
+                ],
+                [
+                    Legend,
+                    {
+                        itemSelector: '#legend',
+                        width: 400,
+                        label: 'Activity levels',
+                        labelFormat: {
+                            lower: "Less than {min} activities",
+                            inner: "Between {down} and {up} activities",
+                            upper: "More than {max} activities"
+                        }
+                    }
+                ]
+            ]);
+        });
+    </script>
+</body>
+</html>
