@@ -1,10 +1,11 @@
 from fastapi import FastAPI, HTTPException
 from fastapi.staticfiles import StaticFiles
-import duckdb
-from config import Config
-import logging
-from app.oracle_to_duckdb import OracleToDuckDBProcessor
 from fastapi.responses import FileResponse
+import duckdb
+import json
+import logging
+from config import Config
+from app.oracle_to_duckdb import OracleToDuckDBProcessor
 
 app = FastAPI()
 
@@ -15,11 +16,16 @@ logger = logging.getLogger(__name__)
 # Initialize OracleToDuckDBProcessor
 processor = OracleToDuckDBProcessor()
 
-def query_duckdb(sql_query):
+def query_duckdb(sql_query, params=None):
     try:
         with duckdb.connect(Config.DUCKDB_FILE) as conn:
+            conn.execute("INSTALL spatial;")
+            conn.execute("LOAD spatial;")
             cursor = conn.cursor()
-            cursor.execute(sql_query)
+            if params:
+                cursor.execute(sql_query, params)
+            else:
+                cursor.execute(sql_query)
             columns = [desc[0] for desc in cursor.description]
             result = cursor.fetchall()
             return [dict(zip(columns, row)) for row in result]
@@ -57,23 +63,13 @@ async def get_records(page: int = 1, size: int = 10):
         raise HTTPException(status_code=500, detail=str(e))
 
 @app.get("/records/{column}/{value}")
-async def get_records_by_column(column: str, value: str):
+async def get_records_by_column(column: str, value: str, page: int = 1, size: int = 10):
     try:
-        records = query_duckdb(f"SELECT * FROM mapview_crashes WHERE {column} = '{value}'")
+        offset = (page - 1) * size
+        records = query_duckdb(f"SELECT * FROM mapview_crashes WHERE {column} = ? LIMIT {size} OFFSET {offset}", [value])
         return {"data": records}
     except Exception as e:
         logging.error(f"Error fetching records by column: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
-
-@app.get("/record/{index}")
-async def get_record(index: int):
-    try:
-        records = query_duckdb(f"SELECT * FROM mapview_crashes LIMIT 1 OFFSET {index}")
-        if not records:
-            raise HTTPException(status_code=404, detail=f"Record with index {index} not found")
-        return {"data": records[0]}
-    except Exception as e:
-        logging.error(f"Error fetching record: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
 @app.get("/earliest_date/")
@@ -85,7 +81,6 @@ async def get_earliest_date():
     except Exception as e:
         logging.error(f"Error fetching earliest date: {e}")
         raise HTTPException(status_code=500, detail="Error fetching earliest date")
-
 
 @app.get("/counties")
 async def get_counties():
@@ -99,18 +94,62 @@ async def get_counties():
 @app.get("/daily_crashes/{county}")
 async def get_daily_crashes(county: str):
     try:
-        crashes = query_duckdb(f"""
-            SELECT epoch(datcrashdate) AS timestamp, COUNT(*) AS crash_count
+        query = """
+            SELECT 
+                EXTRACT(EPOCH FROM datcrashdate) AS timestamp, 
+                COUNT(*) AS crash_count
             FROM mapview_crashes
-            WHERE vchcounty = '{county}'
+            WHERE vchcounty = ?
             GROUP BY datcrashdate
             ORDER BY datcrashdate
-        """)
+        """
+        crashes = query_duckdb(query, [county])
         return {int(crash['timestamp']): crash['crash_count'] for crash in crashes}
     except Exception as e:
         logging.error(f"Error fetching daily crashes: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
+@app.get("/geojson/{county}")
+async def get_geojson(county: str):
+    try:
+        query = """
+            SELECT
+                longitude, latitude, vchcounty, datcrashdate
+            FROM mapview_crashes
+            WHERE vchcounty = ?
+        """
+        result = query_duckdb(query, [county])
+        
+        if not result:
+            logger.info(f"No records found for county: {county}")
+            raise HTTPException(status_code=404, detail="No records found for the specified county")
+        
+        logger.info(f"Fetched {len(result)} records for county: {county}")
+        for row in result:
+            logger.info(f"Record: {row}")
+
+        features = []
+        for row in result:
+            if row['longitude'] is not None and row['latitude'] is not None:
+                geojson = {
+                    "type": "Point",
+                    "coordinates": [row['longitude'], row['latitude']]
+                }
+                features.append({
+                    "type": "Feature",
+                    "geometry": geojson,
+                    "properties": {}  # Add any additional properties if needed
+                })
+        
+        logger.info(f"Generated GeoJSON for county: {county}, features: {len(features)}")
+        
+        return {
+            "type": "FeatureCollection",
+            "features": features
+        }
+    except Exception as e:
+        logging.error(f"Error fetching GeoJSON data: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
 
 @app.get("/update_database/")
 async def update_database():
@@ -123,7 +162,7 @@ async def update_database():
 
 @app.get("/")
 async def root():
-    return FileResponse('static/heatmap.html')
+    return FileResponse('static/index.html')
 
 @app.get("/heatmap.html")
 async def heatmap():
