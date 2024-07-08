@@ -1,9 +1,8 @@
-from fastapi import FastAPI, HTTPException
-from fastapi.staticfiles import StaticFiles
-from fastapi.responses import FileResponse
 import duckdb
-import json
 import logging
+from fastapi import FastAPI, HTTPException
+from fastapi.responses import FileResponse
+from fastapi.staticfiles import StaticFiles
 from config import Config
 from app.oracle_to_duckdb import OracleToDuckDBProcessor
 
@@ -31,124 +30,96 @@ def query_duckdb(sql_query, params=None):
             return [dict(zip(columns, row)) for row in result]
     except Exception as e:
         logging.error(f"DuckDB query error: {e}")
-        raise
+        raise HTTPException(status_code=500, detail=f"DuckDB query error: {e}")
 
 # Mount the static directory to serve static files
 app.mount("/static", StaticFiles(directory="static"), name="static")
 
-@app.get("/columns/")
-async def get_columns():
-    try:
-        columns = query_duckdb("PRAGMA table_info('mapview_crashes')")
-        return {"columns": [col['name'] for col in columns]}
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
-
-@app.get("/record_count/")
-async def get_record_count():
-    try:
-        record_count = query_duckdb("SELECT COUNT(*) AS count FROM mapview_crashes")[0]['count']
-        return {"record_count": record_count}
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
-
-@app.get("/records/")
-async def get_records(page: int = 1, size: int = 10):
-    try:
-        offset = (page - 1) * size
-        records = query_duckdb(f"SELECT * FROM mapview_crashes LIMIT {size} OFFSET {offset}")
-        return {"data": records}
-    except Exception as e:
-        logging.error(f"Error fetching records: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
-
-@app.get("/records/{column}/{value}")
-async def get_records_by_column(column: str, value: str, page: int = 1, size: int = 10):
-    try:
-        offset = (page - 1) * size
-        records = query_duckdb(f"SELECT * FROM mapview_crashes WHERE {column} = ? LIMIT {size} OFFSET {offset}", [value])
-        return {"data": records}
-    except Exception as e:
-        logging.error(f"Error fetching records by column: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
-
-@app.get("/earliest_date/")
-async def get_earliest_date():
-    try:
-        result = query_duckdb("SELECT MIN(datcrashdate) AS earliest_date FROM mapview_crashes")
-        earliest_date = result[0]['earliest_date']
-        return {"earliest_date": earliest_date}
-    except Exception as e:
-        logging.error(f"Error fetching earliest date: {e}")
-        raise HTTPException(status_code=500, detail="Error fetching earliest date")
-
 @app.get("/counties")
 async def get_counties():
     try:
-        counties = query_duckdb("SELECT DISTINCT vchcounty FROM mapview_crashes ORDER BY vchcounty")
-        return [county['vchcounty'] for county in counties]
+        query = "SELECT DISTINCT vchcounty FROM mapview_crashes ORDER BY vchcounty ASC"
+        result = query_duckdb(query)
+        counties = [row['vchcounty'] for row in result]
+        return counties
     except Exception as e:
-        logging.error(f"Error fetching counties: {e}")
+        logger.error(f"Error fetching counties: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
 @app.get("/daily_crashes/{county}")
-async def get_daily_crashes(county: str):
+async def get_daily_crashes(county: str, year: int):
     try:
         query = """
-            SELECT 
-                EXTRACT(EPOCH FROM datcrashdate) AS timestamp, 
-                COUNT(*) AS crash_count
+            SELECT epoch(datcrashdate) AS timestamp, COUNT(*) AS crash_count
             FROM mapview_crashes
-            WHERE vchcounty = ?
+            WHERE vchcounty = ? AND EXTRACT(YEAR FROM datcrashdate) = ?
             GROUP BY datcrashdate
             ORDER BY datcrashdate
         """
-        crashes = query_duckdb(query, [county])
+        crashes = query_duckdb(query, (county, year))
+        if not crashes:
+            return {}
+
         return {int(crash['timestamp']): crash['crash_count'] for crash in crashes}
     except Exception as e:
-        logging.error(f"Error fetching daily crashes: {e}")
+        logger.error(f"Error fetching daily crashes: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
 @app.get("/geojson/{county}")
-async def get_geojson(county: str):
+async def get_geojson(county: str, year: int = None, date: str = None):
     try:
-        query = """
-            SELECT
-                longitude, latitude, vchcounty, datcrashdate
-            FROM mapview_crashes
-            WHERE vchcounty = ?
-        """
-        result = query_duckdb(query, [county])
-        
-        if not result:
+        if year:
+            query = """
+                SELECT longitude, latitude, vchcrashcasenumber, datcrashdate, tintcrashseverity,
+                       ST_Within(
+                           ST_GeomFromText('POINT(' || longitude || ' ' || latitude || ')'),
+                           ST_GeomFromText('POLYGON(( -111.0569 45.0037, -104.0521 45.0037, -104.0521 40.9945, -111.0569 40.9945, -111.0569 45.0037 ))')
+                       ) AS within_wyoming
+                FROM mapview_crashes
+                WHERE vchcounty = ? AND EXTRACT(YEAR FROM datcrashdate) = ?
+            """
+            params = (county, year)
+        elif date:
+            query = """
+                SELECT longitude, latitude, vchcrashcasenumber, datcrashdate, tintcrashseverity,
+                       ST_Within(
+                           ST_GeomFromText('POINT(' || longitude || ' ' || latitude || ')'),
+                           ST_GeomFromText('POLYGON(( -111.0569 45.0037, -104.0521 45.0037, -104.0521 40.9945, -111.0569 40.9945, -111.0569 45.0037 ))')
+                       ) AS within_wyoming
+                FROM mapview_crashes
+                WHERE vchcounty = ? AND datcrashdate = ?
+            """
+            params = (county, date)
+        else:
+            raise HTTPException(status_code=400, detail="Year or date must be provided.")
+
+        crashes = query_duckdb(query, params)
+        if not crashes:
             logger.info(f"No records found for county: {county}")
-            raise HTTPException(status_code=404, detail="No records found for the specified county")
-        
-        logger.info(f"Fetched {len(result)} records for county: {county}")
-        for row in result:
-            logger.info(f"Record: {row}")
+            return {"type": "FeatureCollection", "features": []}
 
         features = []
-        for row in result:
-            if row['longitude'] is not None and row['latitude'] is not None:
-                geojson = {
-                    "type": "Point",
-                    "coordinates": [row['longitude'], row['latitude']]
-                }
-                features.append({
+        for crash in crashes:
+            if crash['within_wyoming']:
+                feature = {
                     "type": "Feature",
-                    "geometry": geojson,
-                    "properties": {}  # Add any additional properties if needed
-                })
-        
+                    "geometry": {
+                        "type": "Point",
+                        "coordinates": [crash['longitude'], crash['latitude']]
+                    },
+                    "properties": {
+                        "vchcrashcasenumber": crash['vchcrashcasenumber'],
+                        "datcrashdate": crash['datcrashdate'].isoformat(),
+                        "tintcrashseverity": crash['tintcrashseverity']
+                    }
+                }
+                features.append(feature)
+
+        geojson = {"type": "FeatureCollection", "features": features}
         logger.info(f"Generated GeoJSON for county: {county}, features: {len(features)}")
-        
-        return {
-            "type": "FeatureCollection",
-            "features": features
-        }
+        return geojson
     except Exception as e:
-        logging.error(f"Error fetching GeoJSON data: {e}")
+        logger.error(f"Error fetching GeoJSON data: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
 @app.get("/update_database/")

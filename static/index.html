@@ -32,6 +32,7 @@
             width: 100%;
             height: 400px;
             margin-bottom: 20px;
+            position: relative;
         }
         #heatmap_parent {
             display: flex;
@@ -75,6 +76,15 @@
             font-size: 14px;
             border-radius: 4px;
         }
+        .toast-container {
+            position: absolute;
+            top: 20px;
+            left: 20px;
+            z-index: 1050;
+        }
+        .toast {
+            font-size: 14px;
+        }
     </style>
 </head>
 <body>
@@ -84,7 +94,9 @@
             <label for="county-select">Select County:</label>
             <select class="form-control" id="county-select"></select>
         </div>
-        <div id="map"></div>
+        <div id="map">
+            <div class="toast-container" id="toast-container"></div>
+        </div>
         <div id="heatmap_parent">
             <div id="cal-heatmap"></div>
             <div id="legend"></div>
@@ -105,9 +117,14 @@
             zoom: 4, // Zoom out a bit more
         });
 
+        // Add zoom and rotation controls to the map.
+        map.addControl(new mapboxgl.NavigationControl());
+
         let cal;
         let startDate;
         let endDate;
+        let currentYear = 2022; // Default year
+        const defaultCounty = "ALBANY"; // Default county
         const range = 12; // Display 12 months
 
         async function loadCounties() {
@@ -126,9 +143,11 @@
                     option.textContent = county;
                     countySelect.appendChild(option);
                 });
-                // Load heatmap data for the first county
+                // Set default county
+                countySelect.value = defaultCounty;
+                // Load heatmap data for the default county
                 if (counties.length > 0) {
-                    loadHeatmap(counties[0]);
+                    loadHeatmap(defaultCounty);
                 }
             } catch (error) {
                 console.error('Failed to fetch counties:', error);
@@ -137,8 +156,8 @@
 
         async function loadHeatmap(county) {
             try {
-                console.log('Loading heatmap data for county:', county);
-                const response = await fetch(`/daily_crashes/${county}`);
+                console.log(`Loading heatmap data for county: ${county} and year: ${currentYear}`);
+                const response = await fetch(`/daily_crashes/${county}?year=${currentYear}`);
                 if (!response.ok) {
                     throw new Error('Network response was not ok');
                 }
@@ -146,7 +165,7 @@
                 console.log('Heatmap data loaded:', data);
                 const processedData = processData(data);
                 calculateDateRange(processedData);
-                renderHeatmap(processedData);
+                renderHeatmap(processedData, county);
                 await loadMapData(county);
             } catch (error) {
                 console.error('Failed to fetch heatmap data:', error);
@@ -168,7 +187,7 @@
             }
         }
 
-        function renderHeatmap(data) {
+        function renderHeatmap(data, county) {
             if (cal) {
                 cal.destroy();
             }
@@ -190,8 +209,7 @@
                         position: "top", 
                         text: (date) => {
                             const currentDate = new Date(date);
-                            currentDate.setMonth(currentDate.getMonth() + 1); // Adjust month label
-                            return currentDate.toLocaleString('default', { month: 'long', year: 'numeric' });
+                            return currentYear + " " + currentDate.toLocaleString('default', { month: 'long' });
                         }
                     },
                 },
@@ -226,21 +244,17 @@
                 ]
             ]);
 
-            cal.on('click', (event, timestamp, value) => {
-                console.log(
-                    'On <b>' +
-                    new Date(timestamp).toLocaleDateString() +
-                    '</b>, the number of accidents on this day of this month was ' +
-                    value 
-                );
-                loadDayData(new Date(timestamp), county);
+            cal.on('click', async (event, timestamp, value) => {
+                const date = new Date(timestamp);
+                console.log(`Loading day data for date: ${date.toISOString().split('T')[0]}`);
+                await loadDayData(date, county);
             });
         }
 
         async function loadMapData(county) {
             try {
-                console.log('Loading map data for county:', county);
-                const response = await fetch(`/geojson/${county}?year=2024`);
+                console.log('Loading map data for county:', county, 'and year:', currentYear);
+                const response = await fetch(`/geojson/${county}?year=${currentYear}`);
                 if (!response.ok) {
                     throw new Error('Network response was not ok');
                 }
@@ -250,6 +264,7 @@
                 if (source) {
                     source.setData(geojson);
                     console.log('Map source updated with new data.');
+                    showToast(`Queried ${geojson.features.length} crash points in ${county} county in ${currentYear}`);
                     zoomToBounds(geojson);
                 } else {
                     console.error('Map source "crashes" not found.');
@@ -272,6 +287,7 @@
                 if (source) {
                     source.setData(geojson);
                     console.log('Map source updated with new data.');
+                    showToast(`Queried ${geojson.features.length} crash points in ${county} county on ${date.toLocaleDateString()}`);
                     zoomToBounds(geojson);
                 } else {
                     console.error('Map source "crashes" not found.');
@@ -293,6 +309,28 @@
             }
         }
 
+        function showToast(message) {
+            const toastContainer = document.getElementById('toast-container');
+            const toast = document.createElement('div');
+            toast.className = 'toast show';
+            toast.style.cssText = 'position: absolute; top: 20px; left: 20px; z-index: 1050;';
+            toast.role = 'alert';
+            toast.innerHTML = `
+                <div class="toast-header">
+                    <strong class="mr-auto">Notification</strong>
+                    <button type="button" class="ml-2 mb-1 close" data-dismiss="toast" aria-label="Close">
+                        <span aria-hidden="true">&times;</span>
+                    </button>
+                </div>
+                <div class="toast-body">${message}</div>
+            `;
+            toastContainer.appendChild(toast);
+            setTimeout(() => {
+                toast.classList.remove('show');
+                setTimeout(() => toast.remove(), 500);
+            }, 10000); // Show for 10 seconds
+        }
+
         document.getElementById('county-select').addEventListener('change', (event) => {
             const selectedCounty = event.target.value;
             console.log('County selected:', selectedCounty);
@@ -301,13 +339,17 @@
 
         document.getElementById('previous-btn').addEventListener('click', () => {
             if (cal) {
-                cal.previous(range);
+                currentYear -= 1;
+                const selectedCounty = document.getElementById('county-select').value;
+                loadHeatmap(selectedCounty);
             }
         });
 
         document.getElementById('next-btn').addEventListener('click', () => {
             if (cal) {
-                cal.next(range);
+                currentYear += 1;
+                const selectedCounty = document.getElementById('county-select').value;
+                loadHeatmap(selectedCounty);
             }
         });
 
@@ -338,6 +380,39 @@
                     'circle-stroke-width': 1,
                     'circle-stroke-color': '#FFFFFF'
                 }
+            });
+
+            // Add a popup to show crash details
+            const popup = new mapboxgl.Popup({
+                closeButton: false,
+                closeOnClick: false
+            });
+
+            map.on('mouseenter', 'crash-points', (e) => {
+                // Change the cursor style as a UI indicator.
+                map.getCanvas().style.cursor = 'pointer';
+
+                // Get the coordinates and properties of the point
+                const coordinates = e.features[0].geometry.coordinates.slice();
+                const properties = e.features[0].properties;
+                const description = `
+                    <strong>Case Number:</strong> ${properties.vchcrashcasenumber}<br>
+                    <strong>Date:</strong> ${new Date(properties.datcrashdate).toLocaleDateString()}<br>
+                    <strong>Severity:</strong> ${properties.tintcrashseverity}
+                `;
+
+                // Ensure that if the map is zoomed out such that multiple copies of the feature are visible, the popup appears over the copy being pointed to.
+                while (Math.abs(e.lngLat.lng - coordinates[0]) > 180) {
+                    coordinates[0] += e.lngLat.lng > coordinates[0] ? 360 : -360;
+                }
+
+                // Populate the popup and set its coordinates based on the feature found.
+                popup.setLngLat(coordinates).setHTML(description).addTo(map);
+            });
+
+            map.on('mouseleave', 'crash-points', () => {
+                map.getCanvas().style.cursor = '';
+                popup.remove();
             });
         });
     </script>
