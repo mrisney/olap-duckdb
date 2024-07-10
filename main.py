@@ -1,3 +1,5 @@
+import oracledb
+import os
 import duckdb
 import logging
 from fastapi import FastAPI, HTTPException
@@ -11,6 +13,11 @@ app = FastAPI()
 # Initialize logger
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
+
+
+# Set Oracle Instant Client path
+os.environ['DYLD_LIBRARY_PATH'] = '/Users/marcrisney/oracle/instantclient:' + os.environ.get('DYLD_LIBRARY_PATH', '')
+
 
 # Initialize OracleToDuckDBProcessor
 processor = OracleToDuckDBProcessor()

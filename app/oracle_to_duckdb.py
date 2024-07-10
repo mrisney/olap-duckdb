@@ -1,9 +1,9 @@
-import cx_Oracle
-import pandas as pd
+import oracledb
 import duckdb
+import logging
+import pandas as pd
 from sqlalchemy import create_engine
 from config import Config
-import logging
 
 class OracleToDuckDBProcessor:
     def __init__(self):
