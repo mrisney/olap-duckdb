@@ -367,52 +367,117 @@
                 data: {
                     type: 'FeatureCollection',
                     features: []
+                },
+                cluster: true,
+                clusterMaxZoom: 14, // Max zoom to cluster points on
+                clusterRadius: 50 // Radius of each cluster when clustering points (defaults to 50)
+            });
+
+            map.addLayer({
+                id: 'clusters',
+                type: 'circle',
+                source: 'crashes',
+                filter: ['has', 'point_count'],
+                paint: {
+                    'circle-color': [
+                        'step',
+                        ['get', 'point_count'],
+                        'rgba(66, 134, 244, 0.6)', // Blue, transparent
+                        100,
+                        'rgba(38, 92, 212, 0.6)', // Darker blue, transparent
+                        750,
+                        'rgba(19, 64, 184, 0.6)' // Even darker blue, transparent
+                    ],
+                    'circle-radius': [
+                        'step',
+                        ['get', 'point_count'],
+                        20,
+                        100,
+                        30,
+                        750,
+                        40
+                    ]
                 }
             });
 
             map.addLayer({
-                id: 'crash-points',
-                type: 'circle',
+                id: 'cluster-count',
+                type: 'symbol',
                 source: 'crashes',
+                filter: ['has', 'point_count'],
+                layout: {
+                    'text-field': '{point_count_abbreviated}',
+                    'text-font': ['DIN Offc Pro Medium', 'Arial Unicode MS Bold'],
+                    'text-size': 12
+                },
                 paint: {
-                    'circle-radius': 5,
-                    'circle-color': '#FF5722',
-                    'circle-stroke-width': 1,
-                    'circle-stroke-color': '#FFFFFF'
+                    'text-color': '#ffffff'
                 }
             });
 
-            // Add a popup to show crash details
-            const popup = new mapboxgl.Popup({
-                closeButton: false,
-                closeOnClick: false
+            map.addLayer({
+                id: 'unclustered-point',
+                type: 'circle',
+                source: 'crashes',
+                filter: ['!', ['has', 'point_count']],
+                paint: {
+                    'circle-color': '#11b4da',
+                    'circle-radius': 4,
+                    'circle-stroke-width': 1,
+                    'circle-stroke-color': '#fff'
+                }
             });
 
-            map.on('mouseenter', 'crash-points', (e) => {
-                // Change the cursor style as a UI indicator.
-                map.getCanvas().style.cursor = 'pointer';
+            // inspect a cluster on click
+            map.on('click', 'clusters', function (e) {
+                var features = map.queryRenderedFeatures(e.point, {
+                    layers: ['clusters']
+                });
+                var clusterId = features[0].properties.cluster_id;
+                map.getSource('crashes').getClusterExpansionZoom(
+                    clusterId,
+                    function (err, zoom) {
+                        if (err) return;
 
-                // Get the coordinates and properties of the point
-                const coordinates = e.features[0].geometry.coordinates.slice();
-                const properties = e.features[0].properties;
+                        map.easeTo({
+                            center: features[0].geometry.coordinates,
+                            zoom: zoom
+                        });
+                    }
+                );
+            });
+
+            // When a click event occurs on a feature in
+            // the unclustered-point layer, open a popup at
+            // the location of the feature, with
+            // description HTML from its properties.
+            map.on('click', 'unclustered-point', function (e) {
+                var coordinates = e.features[0].geometry.coordinates.slice();
+                var properties = e.features[0].properties;
                 const description = `
                     <strong>Case Number:</strong> ${properties.vchcrashcasenumber}<br>
                     <strong>Date:</strong> ${new Date(properties.datcrashdate).toLocaleDateString()}<br>
                     <strong>Severity:</strong> ${properties.tintcrashseverity}
                 `;
 
-                // Ensure that if the map is zoomed out such that multiple copies of the feature are visible, the popup appears over the copy being pointed to.
+                // Ensure that if the map is zoomed out such that multiple
+                // copies of the feature are visible, the popup appears
+                // over the copy being pointed to.
                 while (Math.abs(e.lngLat.lng - coordinates[0]) > 180) {
                     coordinates[0] += e.lngLat.lng > coordinates[0] ? 360 : -360;
                 }
 
-                // Populate the popup and set its coordinates based on the feature found.
-                popup.setLngLat(coordinates).setHTML(description).addTo(map);
+                new mapboxgl.Popup()
+                    .setLngLat(coordinates)
+                    .setHTML(description)
+                    .addTo(map);
             });
 
-            map.on('mouseleave', 'crash-points', () => {
+            map.on('mouseenter', 'clusters', function () {
+                map.getCanvas().style.cursor = 'pointer';
+            });
+            map.on('mouseleave', 'clusters', function () {
                 map.getCanvas().style.cursor = '';
-                popup.remove();
             });
         });
     </script>
