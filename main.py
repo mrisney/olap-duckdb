@@ -5,19 +5,25 @@ import logging
 from fastapi import FastAPI, HTTPException
 from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
+from starlette.middleware.cors import CORSMiddleware
 from config import Config
 from app.oracle_to_duckdb import OracleToDuckDBProcessor
 
 app = FastAPI()
 
+# Middleware for CORS
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+
+
 # Initialize logger
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
-
-
-# Set Oracle Instant Client path
-os.environ['DYLD_LIBRARY_PATH'] = '/Users/marcrisney/oracle/instantclient:' + os.environ.get('DYLD_LIBRARY_PATH', '')
-
 
 # Initialize OracleToDuckDBProcessor
 processor = OracleToDuckDBProcessor()
@@ -41,6 +47,7 @@ def query_duckdb(sql_query, params=None):
 
 # Mount the static directory to serve static files
 app.mount("/static", StaticFiles(directory="static"), name="static")
+
 
 @app.get("/counties")
 async def get_counties():
@@ -140,6 +147,10 @@ async def update_database():
 
 @app.get("/")
 async def root():
+    return FileResponse('static/index.html')
+
+@app.get("/index.html")
+async def serve_index():
     return FileResponse('static/index.html')
 
 @app.get("/heatmap.html")
