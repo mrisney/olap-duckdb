@@ -130,7 +130,7 @@
         async function loadCounties() {
             try {
                 console.log('Loading counties...');
-                const response = await fetch('/counties');
+                const response = await fetch('/heatmap/counties');
                 if (!response.ok) {
                     throw new Error('Network response was not ok');
                 }
@@ -157,7 +157,7 @@
         async function loadHeatmap(county) {
             try {
                 console.log(`Loading heatmap data for county: ${county} and year: ${currentYear}`);
-                const response = await fetch(`/daily_crashes/${county}?year=${currentYear}`);
+                const response = await fetch(`/heatmap/daily_crashes/${county}?year=${currentYear}`);
                 if (!response.ok) {
                     throw new Error('Network response was not ok');
                 }
@@ -254,7 +254,7 @@
         async function loadMapData(county) {
             try {
                 console.log('Loading map data for county:', county, 'and year:', currentYear);
-                const response = await fetch(`/geojson/${county}?year=${currentYear}`);
+                const response = await fetch(`/heatmap/geojson/${county}?year=${currentYear}`);
                 if (!response.ok) {
                     throw new Error('Network response was not ok');
                 }
@@ -277,7 +277,7 @@
         async function loadDayData(date, county) {
             try {
                 console.log('Loading day data for date:', date, 'county:', county);
-                const response = await fetch(`/geojson/${county}?date=${date.toISOString().split('T')[0]}`);
+                const response = await fetch(`/heatmap/geojson/${county}?date=${date.toISOString().split('T')[0]}`);
                 if (!response.ok) {
                     throw new Error('Network response was not ok');
                 }
